@@ -292,6 +292,7 @@ void ExecuteInstructions() {
                 break;
         }
 
+        // Comparar registradores para CMP
         if ((proc.InstructionRegister & 0xF800) == 0x0000 && (proc.InstructionRegister & 0x0003) == 0x0003) {
             uint8_t sourceReg1 = (proc.InstructionRegister & 0x00E0) >> 5;
             uint8_t sourceReg2 = (proc.InstructionRegister & 0x001C) >> 2;
@@ -300,6 +301,7 @@ void ExecuteInstructions() {
             proc.Sign = (proc.Registers[sourceReg1] < proc.Registers[sourceReg2]) ? 1 : 0;
         }
 
+        // PSH
         if ((proc.InstructionRegister & 0xF800) == 0x0000 && (proc.InstructionRegister & 0x0003) == 0x0001) {
             uint8_t sourceReg = (proc.InstructionRegister & 0x001C) >> 2;
 
@@ -309,6 +311,7 @@ void ExecuteInstructions() {
             proc.StackPointer -= 2;
         }
 
+        // POP
         if ((proc.InstructionRegister & 0xF800) == 0x0000 && (proc.InstructionRegister & 0x0003) == 0x0002) {
             proc.StackPointer += 2;
             uint8_t destReg = (proc.InstructionRegister & 0x0700) >> 8;
@@ -316,6 +319,7 @@ void ExecuteInstructions() {
             proc.Registers[destReg] = stack[STACK_END] | (stack[STACK_END + 1] << 8);
         }
 
+        // Instruções de Desvio
         if ((proc.InstructionRegister & 0xF000) == 0x0000 && (proc.InstructionRegister & 0x0800) == 0x0800) {
             uint16_t immediate = (proc.InstructionRegister & 0x07FC) >> 2;
 
@@ -325,11 +329,13 @@ void ExecuteInstructions() {
 
             uint8_t branchType = (proc.InstructionRegister & 0x0003);
 
+            // JMP
             if (branchType == 0x0) {
                 proc.ProgramCounter += immediate;
                 if (proc.ProgramCounter == highestAddress) {
                     break;
                 }
+            // JEQ
             } else if (branchType == 0x1) {
                 if (proc.Zero == 1 && proc.Sign == 0) {
                     proc.ProgramCounter += immediate;
@@ -337,6 +343,7 @@ void ExecuteInstructions() {
                         break;
                     }
                 }
+            // JLT
             } else if (branchType == 0x2) {
                 if (proc.Zero == 0 && proc.Sign == 1) {
                     proc.ProgramCounter += immediate;
@@ -344,6 +351,7 @@ void ExecuteInstructions() {
                         break;
                     }
                 }
+            // JGT
             } else if (branchType == 0x3) {
                 if (proc.Zero == 0 && proc.Sign == 0) {
                     proc.ProgramCounter += immediate;
@@ -354,6 +362,7 @@ void ExecuteInstructions() {
             }
         }
 
+        // Verificação se o PC passou do maior endereço conhecido
         if (proc.ProgramCounter > highestAddress) {
             break;
         }
