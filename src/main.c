@@ -1,3 +1,9 @@
+// Overview
+// Este emulador simula um processador simples,
+// permitindo a execução de instruções carregadas a partir de um arquivo de texto.
+// Ele possui um conjunto de registradores, uma pilha de execução
+// e uma memória principal para armazenamento de instruções e dados.
+
 #include <stdio.h>
 #include <stdint.h>
 #include <stdlib.h>
@@ -7,14 +13,20 @@
 #define STACK_POINTER_BASE 0x8200
 
 typedef struct Processor {
-    uint16_t Registers[8];
-    uint16_t ProgramCounter;
-    uint32_t StackPointer;
-    uint16_t InstructionRegister;
-    int Carry, Overflow, Zero, Sign;
+    uint16_t Registers[8];          // Registradores gerais
+    uint16_t ProgramCounter;        // Contador de programa
+    uint32_t StackPointer;          // Ponteiro de pilha
+    uint16_t InstructionRegister;   // Registrador de instrução
+    int Carry, Overflow, Zero, Sign; // Flags de status
 } Processor;
 
 Processor proc = {{0}, 0x0000, 0x8200, 0x0000, 0, 0, 0, 0};
+
+// - `mainMemory[255]`: Memória principal onde as instruções são armazenadas.
+// - `dataMemory[255]`: Memória reservada para armazenamento de dados.
+// - `stack[255]`: Implementação da pilha do processador.
+// - `accessedMemory[255]`: Controle de acessos à memória de dados.
+// - `stackAccessed[255]`: Controle de acessos à pilha.
 uint8_t mainMemory[MEMORY_SIZE];
 uint8_t dataMemory[MEMORY_SIZE];
 uint8_t accessedMemory[MEMORY_SIZE] = {0};
@@ -25,6 +37,8 @@ bool stackAccessed[MEMORY_SIZE] = {false};
 
 uint16_t highestAddress = 0;
 
+// Carrega um arquivo contendo instruções no formato 
+// `endereco: 0xINSTRUCAO` para a memória principal.
 void LoadFile(const char *fileName) {
     char buffer[20];
     uint16_t address, instruction;
@@ -48,6 +62,7 @@ void LoadFile(const char *fileName) {
     fclose(file);
 }
 
+// Exibe o estado atual dos registradores, flags, memória acessada e pilha.
 void DisplayState() {
     printf("REGISTRADORES:\n");
     for (int i = 0; i < 8; i++) {
@@ -74,26 +89,32 @@ void DisplayState() {
     }
 }
 
+// Executa as instruções armazenadas na memória, atualizando 
+// registradores e flags conforme necessário.
 void ExecuteInstructions() {
     while (1) {
         proc.InstructionRegister = mainMemory[proc.ProgramCounter] | (mainMemory[proc.ProgramCounter + 1] << 8);
         proc.ProgramCounter += 2;
         uint8_t opcode = (proc.InstructionRegister & 0xF000) >> 12;
 
+        // HALT
         if (proc.InstructionRegister == 0xFFFF) {
             break;
         }
 
+        // Invalid Instruction
         if ((proc.InstructionRegister & 0xF800) >> 11 == 0 && (proc.InstructionRegister & 0x0003) == 0 &&
             (proc.InstructionRegister & 0x00FC) >> 2 != 0) {
             break;
         }
 
+        // NOP
         if (proc.InstructionRegister == 0x0000) {
             DisplayState();
         }
 
         switch (opcode) {
+            // MOV
             case 0x1: {
                 uint8_t bit11 = (proc.InstructionRegister & 0x0800) >> 11;
                 uint8_t destReg = (proc.InstructionRegister & 0x0700) >> 8;
@@ -107,6 +128,7 @@ void ExecuteInstructions() {
                 }
             }
             break;
+            // STORE
             case 0x2: {
                 uint8_t bit11 = (proc.InstructionRegister & 0x0800) >> 11;
                 uint8_t sourceReg = (proc.InstructionRegister & 0x00E0) >> 5;
@@ -124,12 +146,14 @@ void ExecuteInstructions() {
                 }
             }
             break;
+            // LOAD
             case 0x3: {
                 uint8_t destReg = (proc.InstructionRegister & 0x0700) >> 8;
                 uint8_t sourceReg = (proc.InstructionRegister & 0x00E0) >> 5;
                 proc.Registers[destReg] = dataMemory[proc.Registers[sourceReg]] | (dataMemory[proc.Registers[sourceReg] + 1] << 8);
             }
             break;
+            // ADD
             case 0x4: {
                 uint8_t destReg = (proc.InstructionRegister & 0x0700) >> 8;
                 uint8_t sourceReg1 = (proc.InstructionRegister & 0x00E0) >> 5;
@@ -147,6 +171,7 @@ void ExecuteInstructions() {
                 proc.Sign = (proc.Registers[destReg] & 0x8000) ? 1 : 0;
             }
             break;
+            // SUB
             case 0x5: {
                 uint8_t destReg = (proc.InstructionRegister & 0x0700) >> 8;
                 uint8_t sourceReg1 = (proc.InstructionRegister & 0x00E0) >> 5;
@@ -162,6 +187,7 @@ void ExecuteInstructions() {
                 proc.Sign = (proc.Registers[destReg] & 0x8000) ? 1 : 0;
             }
             break;
+            // MUL
             case 0x6: {
                 uint8_t destReg = (proc.InstructionRegister & 0x0700) >> 8;
                 uint8_t sourceReg1 = (proc.InstructionRegister & 0x00E0) >> 5;
@@ -179,6 +205,7 @@ void ExecuteInstructions() {
                 proc.Sign = (proc.Registers[destReg] & 0x8000) ? 1 : 0;
             }
             break;
+            // AND
             case 0x7: {
                 uint8_t destReg = (proc.InstructionRegister & 0x0700) >> 8;
                 uint8_t sourceReg1 = (proc.InstructionRegister & 0x00E0) >> 5;
@@ -190,6 +217,7 @@ void ExecuteInstructions() {
                 proc.Sign = (proc.Registers[destReg] & 0x8000) ? 1 : 0;
             }
             break;
+            // OR
             case 0x8: {
                 uint8_t destReg = (proc.InstructionRegister & 0x0700) >> 8;
                 uint8_t sourceReg1 = (proc.InstructionRegister & 0x00E0) >> 5;
@@ -201,6 +229,7 @@ void ExecuteInstructions() {
                 proc.Sign = (proc.Registers[destReg] & 0x8000) ? 1 : 0;
             }
             break;
+            // NOT
             case 0x9: {
                 uint8_t destReg = (proc.InstructionRegister & 0x0700) >> 8;
                 uint8_t sourceReg = (proc.InstructionRegister & 0x00E0) >> 5;
@@ -211,6 +240,7 @@ void ExecuteInstructions() {
                 proc.Sign = (proc.Registers[destReg] & 0x8000) ? 1 : 0;
             }
             break;
+            // XOR
             case 0xA: {
                 uint8_t destReg = (proc.InstructionRegister & 0x0700) >> 8;
                 uint8_t sourceReg1 = (proc.InstructionRegister & 0x00E0) >> 5;
@@ -222,6 +252,7 @@ void ExecuteInstructions() {
                 proc.Sign = (proc.Registers[destReg] & 0x8000) ? 1 : 0;
             }
             break;
+            // Shift Right
             case 0xB: {
                 uint8_t destReg = (proc.InstructionRegister & 0x0700) >> 8;
                 uint8_t sourceReg = (proc.InstructionRegister & 0x00E0) >> 5;
@@ -230,6 +261,7 @@ void ExecuteInstructions() {
                 proc.Registers[destReg] = proc.Registers[sourceReg] >> immediate;
             }
             break;
+            // Shift Left
             case 0xC: {
                 uint16_t destReg = (proc.InstructionRegister & 0x0700) >> 8;
                 uint8_t sourceReg = (proc.InstructionRegister & 0x00E0) >> 5;
@@ -238,6 +270,7 @@ void ExecuteInstructions() {
                 proc.Registers[destReg] = proc.Registers[sourceReg] << immediate;
             }
             break;
+            // Rotate Right
             case 0xD: {
                 uint8_t destReg = (proc.InstructionRegister & 0x0700) >> 8;
                 uint8_t sourceReg = (proc.InstructionRegister & 0x00E0) >> 5;
@@ -246,6 +279,7 @@ void ExecuteInstructions() {
                 proc.Registers[destReg] = (proc.Registers[sourceReg] >> 1) | (leastSignificantBit << 15);
             }
             break;
+            // Rotate Left
             case 0xE: {
                 uint8_t destReg = (proc.InstructionRegister & 0x0700) >> 8;
                 uint8_t sourceReg = (proc.InstructionRegister & 0x00E0) >> 5;
