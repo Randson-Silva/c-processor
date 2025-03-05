@@ -1,6 +1,7 @@
 #include <stdio.h>
 #include <stdint.h>
 #include <stdlib.h>
+#include <stdbool.h>
 
 #define MEMORY_SIZE 255
 #define STACK_POINTER_BASE 0x8200
@@ -18,6 +19,7 @@ uint8_t mainMemory[MEMORY_SIZE];
 uint8_t dataMemory[MEMORY_SIZE];
 uint8_t accessedMemory[MEMORY_SIZE] = {0};
 uint8_t stack[MEMORY_SIZE];
+bool stackAccessed[MEMORY_SIZE] = {false};
 
 #define STACK_END (proc.StackPointer - STACK_POINTER_BASE)
 
@@ -46,22 +48,42 @@ void LoadFile(const char *fileName) {
     fclose(file);
 }
 
-void DisplayState() {
-    printf("REGISTRADORES:\n");
+void PrintRegisters() {
     for (int i = 0; i < 8; i++) {
         printf("R%d: 0x%04X\n", i, proc.Registers[i]);
     }
-    printf("PC: 0x%04X SP: 0x%04X\n", proc.ProgramCounter, proc.StackPointer);
-    printf("FLAGS:\n");
-    printf("Carry: %d\nOverflow: %d\nZero: %d\nSign: %d\n", proc.Carry, proc.Overflow, proc.Zero, proc.Sign);
-    printf("MEMÓRIA DE DADOS:\n");
+}
+
+void PrintStack() {
+    while (proc.StackPointer > 0x8100) {
+        proc.StackPointer -= 2;
+
+        uint16_t value = stack[STACK_END] | (stack[STACK_END + 1] << 8);
+        if (stackAccessed[STACK_END]) {
+            printf("0x%04X: 0x%04X\n", proc.StackPointer, value);
+        }
+    }
+}
+
+void PrintMem() {
     for (int i = 0; i < MEMORY_SIZE; i += 1) {
         if (accessedMemory[i]) {
             uint16_t value = dataMemory[i] | (dataMemory[i + 1] << 8);
             printf("0x%04X: 0x%04X\n", i, value);
         }
     }
+}
+
+void DisplayState() {
+    printf("REGISTRADORES:\n");
+    PrintRegisters();
+    printf("PC: 0x%04X SP: 0x%04X\n", proc.ProgramCounter, proc.StackPointer);
+    printf("FLAGS:\n");
+    printf("Carry: %d\nOverflow: %d\nZero: %d\nSign: %d\n", proc.Carry, proc.Overflow, proc.Zero, proc.Sign);
+    printf("MEMÓRIA DE DADOS:\n");
+    PrintMem();
     printf("PILHA:\n");
+    PrintStack();
 }
 
 void ExecuteInstructions() {
@@ -70,176 +92,178 @@ void ExecuteInstructions() {
         proc.ProgramCounter += 2;
         uint8_t opcode = (proc.InstructionRegister & 0xF000) >> 12;
 
-        if (proc.InstructionRegister == 0xFFFF) break;
-
-        if (
-            (proc.InstructionRegister & 0xF800) >> 11 == 0 &&
-            (proc.InstructionRegister & 0x0003) == 0 &&
-            (proc.InstructionRegister & 0x00FC) >> 2 != 0
-        ) {
+        if (proc.InstructionRegister == 0xFFFF) {
             break;
         }
 
-        if (proc.InstructionRegister == 0x0000) DisplayState();
+        if ((proc.InstructionRegister & 0xF800) >> 11 == 0 && (proc.InstructionRegister & 0x0003) == 0 &&
+            (proc.InstructionRegister & 0x00FC) >> 2 != 0) {
+            break;
+        }
+
+        if (proc.InstructionRegister == 0x0000) {
+            DisplayState();
+        }
 
         switch (opcode) {
-        case 0x1: {
-            uint16_t bit11 = (proc.InstructionRegister & 0x0800) >> 11;
-            uint16_t destReg = (proc.InstructionRegister & 0x0700) >> 8;
+            case 0x1: {
+                uint16_t bit11 = (proc.InstructionRegister & 0x0800) >> 11;
+                uint16_t destReg = (proc.InstructionRegister & 0x0700) >> 8;
 
-            if (bit11) {
-                uint8_t immediate = (proc.InstructionRegister & 0x00FF);
-                proc.Registers[destReg] = immediate;
-            } else {
+                if (bit11) {
+                    uint8_t immediate = (proc.InstructionRegister & 0x00FF);
+                    proc.Registers[destReg] = immediate;
+                } else {
+                    uint16_t sourceReg = (proc.InstructionRegister & 0x00E0) >> 5;
+                    proc.Registers[destReg] = proc.Registers[sourceReg];
+                }
+            }
+            break;
+            case 0x2: {
+                uint8_t bit11 = (proc.InstructionRegister & 0x0800) >> 11;
+                uint8_t sourceReg = (proc.InstructionRegister & 0x00E0) >> 5;
+
+                if (bit11) {
+                    uint8_t immediate = ((proc.InstructionRegister & 0x0700) >> 3) | (proc.InstructionRegister & 0x001F);
+
+                    dataMemory[proc.Registers[sourceReg]] = immediate;
+                    accessedMemory[proc.Registers[sourceReg]] = 1;
+                } else {
+                    uint8_t tempReg = (proc.InstructionRegister & 0x001C) >> 2;
+                    dataMemory[proc.Registers[sourceReg]] = proc.Registers[tempReg] & 0xFF;
+                    dataMemory[proc.Registers[sourceReg] + 1] = (proc.Registers[tempReg] >> 8) & 0xFF;
+                    accessedMemory[proc.Registers[sourceReg]] = 1;
+                }
+            }
+            break;
+            case 0x3: {
+                uint8_t destReg = (proc.InstructionRegister & 0x0700) >> 8;
+                uint8_t sourceReg = (proc.InstructionRegister & 0x00E0) >> 5;
+                proc.Registers[destReg] = dataMemory[proc.Registers[sourceReg]] | (dataMemory[proc.Registers[sourceReg] + 1] << 8);
+            }
+            break;
+            case 0x4: {
+                uint16_t destReg = (proc.InstructionRegister & 0x0700) >> 8;
+                uint16_t sourceReg1 = (proc.InstructionRegister & 0x00E0) >> 5;
+                uint16_t sourceReg2 = (proc.InstructionRegister & 0x001C) >> 2;
+
+                proc.Registers[destReg] = proc.Registers[sourceReg1] + proc.Registers[sourceReg2];
+
+                uint32_t result = proc.Registers[sourceReg1] + proc.Registers[sourceReg2];
+
+                proc.Carry = (result > 0xFFFF) ? 1 : 0;
+
+                proc.Zero = (proc.Registers[destReg] == 0) ? 1 : 0;
+                proc.Sign = (proc.Registers[destReg] & 0x8000) ? 1 : 0;
+            }
+            break;
+            case 0x5: {
+                uint16_t destReg = (proc.InstructionRegister & 0x0700) >> 8;
+                uint16_t sourceReg1 = (proc.InstructionRegister & 0x00E0) >> 5;
+                uint16_t sourceReg2 = (proc.InstructionRegister & 0x001C) >> 2;
+
+                proc.Registers[destReg] = proc.Registers[sourceReg1] - proc.Registers[sourceReg2];
+
+                uint32_t result = proc.Registers[sourceReg1] - proc.Registers[sourceReg2];
+
+                proc.Carry = (result > 0xFFFF) ? 1 : 0;
+
+                proc.Zero = (proc.Registers[destReg] == 0) ? 1 : 0;
+                proc.Sign = (proc.Registers[destReg] & 0x8000) ? 1 : 0;
+            }
+            break;
+            case 0x6: {
+                uint16_t destReg = (proc.InstructionRegister & 0x0700) >> 8;
+                uint16_t sourceReg1 = (proc.InstructionRegister & 0x00E0) >> 5;
+                uint16_t sourceReg2 = (proc.InstructionRegister & 0x001C) >> 2;
+
+                proc.Registers[destReg] = proc.Registers[sourceReg1] * proc.Registers[sourceReg2];
+
+                uint32_t result = proc.Registers[sourceReg1] * proc.Registers[sourceReg2];
+
+                proc.Carry = (result > 0xFFFF) ? 1 : 0;
+
+                proc.Zero = (proc.Registers[destReg] == 0) ? 1 : 0;
+                proc.Sign = (proc.Registers[destReg] & 0x8000) ? 1 : 0;
+            }
+            break;
+            case 0x7: {
+                uint16_t destReg = (proc.InstructionRegister & 0x0700) >> 8;
+                uint16_t sourceReg1 = (proc.InstructionRegister & 0x00E0) >> 5;
+                uint16_t sourceReg2 = (proc.InstructionRegister & 0x001C) >> 2;
+
+                proc.Registers[destReg] = proc.Registers[sourceReg1] & proc.Registers[sourceReg2];
+
+                proc.Zero = (proc.Registers[destReg] == 0) ? 1 : 0;
+                proc.Sign = (proc.Registers[destReg] & 0x8000) ? 1 : 0;
+            }
+            break;
+            case 0x8: {
+                uint16_t destReg = (proc.InstructionRegister & 0x0700) >> 8;
+                uint16_t sourceReg1 = (proc.InstructionRegister & 0x00E0) >> 5;
+                uint16_t sourceReg2 = (proc.InstructionRegister & 0x001C) >> 2;
+
+                proc.Registers[destReg] = proc.Registers[sourceReg1] | proc.Registers[sourceReg2];
+
+                proc.Zero = (proc.Registers[destReg] == 0) ? 1 : 0;
+                proc.Sign = (proc.Registers[destReg] & 0x8000) ? 1 : 0;
+            }
+            break;
+            case 0x9: {
+                uint16_t destReg = (proc.InstructionRegister & 0x0700) >> 8;
                 uint16_t sourceReg = (proc.InstructionRegister & 0x00E0) >> 5;
-                proc.Registers[destReg] = proc.Registers[sourceReg];
+
+                proc.Registers[destReg] = ~proc.Registers[sourceReg];
+
+                proc.Zero = (proc.Registers[destReg] == 0) ? 1 : 0;
+                proc.Sign = (proc.Registers[destReg] & 0x8000) ? 1 : 0;
             }
             break;
-        }
-        case 0x2: {
-            uint8_t bit11 = (proc.InstructionRegister & 0x0800) >> 11;
-            uint8_t sourceReg = (proc.InstructionRegister & 0x00E0) >> 5;
+            case 0xA: {
+                uint16_t destReg = (proc.InstructionRegister & 0x0700) >> 8;
+                uint16_t sourceReg1 = (proc.InstructionRegister & 0x00E0) >> 5;
+                uint16_t sourceReg2 = (proc.InstructionRegister & 0x001C) >> 2;
 
-            if (bit11) {
-                uint8_t immediate = ((proc.InstructionRegister & 0x0700) >> 3) | (proc.InstructionRegister & 0x001F);
+                proc.Registers[destReg] = proc.Registers[sourceReg1] ^ proc.Registers[sourceReg2];
 
-                dataMemory[proc.Registers[sourceReg]] = immediate;
-                accessedMemory[proc.Registers[sourceReg]] = 1;
-            } else {
-                uint8_t tempReg = (proc.InstructionRegister & 0x001C) >> 2;
-                dataMemory[proc.Registers[sourceReg]] = proc.Registers[tempReg] & 0xFF;
-                dataMemory[proc.Registers[sourceReg] + 1] = (proc.Registers[tempReg] >> 8) & 0xFF;
-                accessedMemory[proc.Registers[sourceReg]] = 1;
+                proc.Zero = (proc.Registers[destReg] == 0) ? 1 : 0;
+                proc.Sign = (proc.Registers[destReg] & 0x8000) ? 1 : 0;
             }
             break;
-        }
-        case 0x3: {
-            uint8_t destReg = (proc.InstructionRegister & 0x0700) >> 8;
-            uint8_t sourceReg = (proc.InstructionRegister & 0x00E0) >> 5;
-            proc.Registers[destReg] = dataMemory[proc.Registers[sourceReg]] | (dataMemory[proc.Registers[sourceReg] + 1] << 8);
+            case 0xB: {
+                uint16_t destReg = (proc.InstructionRegister & 0x0700) >> 8;
+                uint16_t sourceReg = (proc.InstructionRegister & 0x00E0) >> 5;
+                uint16_t immediate = proc.InstructionRegister & 0x001F;
+
+                proc.Registers[destReg] = proc.Registers[sourceReg] >> immediate;
+            }
             break;
-        }
-        case 0x4: {
-            uint16_t destReg = (proc.InstructionRegister & 0x0700) >> 8;
-            uint16_t sourceReg1 = (proc.InstructionRegister & 0x00E0) >> 5;
-            uint16_t sourceReg2 = (proc.InstructionRegister & 0x001C) >> 2;
+            case 0xC: {
+                uint16_t destReg = (proc.InstructionRegister & 0x0700) >> 8;
+                uint16_t sourceReg = (proc.InstructionRegister & 0x00E0) >> 5;
+                uint16_t immediate = proc.InstructionRegister & 0x001F;
 
-            proc.Registers[destReg] = proc.Registers[sourceReg1] + proc.Registers[sourceReg2];
-
-            uint32_t result = proc.Registers[sourceReg1] + proc.Registers[sourceReg2];
-
-            proc.Carry = (result > 0xFFFF) ? 1 : 0;
-
-            proc.Zero = (proc.Registers[destReg] == 0) ? 1 : 0;
-            proc.Sign = (proc.Registers[destReg] & 0x8000) ? 1 : 0;
+                proc.Registers[destReg] = proc.Registers[sourceReg] << immediate;
+            }
             break;
-        }
-        case 0x5: {
-            uint16_t destReg = (proc.InstructionRegister & 0x0700) >> 8;
-            uint16_t sourceReg1 = (proc.InstructionRegister & 0x00E0) >> 5;
-            uint16_t sourceReg2 = (proc.InstructionRegister & 0x001C) >> 2;
+            case 0xD: {
+                uint16_t destReg = (proc.InstructionRegister & 0x0700) >> 8;
+                uint16_t sourceReg = (proc.InstructionRegister & 0x00E0) >> 5;
+                uint16_t leastSignificantBit = proc.Registers[sourceReg] & 0x0001;
 
-            proc.Registers[destReg] = proc.Registers[sourceReg1] - proc.Registers[sourceReg2];
-
-            uint32_t result = proc.Registers[sourceReg1] - proc.Registers[sourceReg2];
-
-            proc.Carry = (result > 0xFFFF) ? 1 : 0;
-
-            proc.Zero = (proc.Registers[destReg] == 0) ? 1 : 0;
-            proc.Sign = (proc.Registers[destReg] & 0x8000) ? 1 : 0;
+                proc.Registers[destReg] = (proc.Registers[sourceReg] >> 1) | (leastSignificantBit << 15);
+            }
             break;
-        }
-        case 0x6: {
-            uint16_t destReg = (proc.InstructionRegister & 0x0700) >> 8;
-            uint16_t sourceReg1 = (proc.InstructionRegister & 0x00E0) >> 5;
-            uint16_t sourceReg2 = (proc.InstructionRegister & 0x001C) >> 2;
+            case 0xE: {
+                uint16_t destReg = (proc.InstructionRegister & 0x0700) >> 8;
+                uint16_t sourceReg = (proc.InstructionRegister & 0x00E0) >> 5;
+                uint16_t mostSignificantBit = (proc.Registers[sourceReg] & 0x8000) >> 15;
 
-            proc.Registers[destReg] = proc.Registers[sourceReg1] * proc.Registers[sourceReg2];
-
-            uint32_t result = proc.Registers[sourceReg1] * proc.Registers[sourceReg2];
-
-            proc.Carry = (result > 0xFFFF) ? 1 : 0;
-
-            proc.Zero = (proc.Registers[destReg] == 0) ? 1 : 0;
-            proc.Sign = (proc.Registers[destReg] & 0x8000) ? 1 : 0;
+                proc.Registers[destReg] = (proc.Registers[sourceReg] << 1) | mostSignificantBit;
+            }
             break;
-        }
-        case 0x7: {
-            uint16_t destReg = (proc.InstructionRegister & 0x0700) >> 8;
-            uint16_t sourceReg1 = (proc.InstructionRegister & 0x00E0) >> 5;
-            uint16_t sourceReg2 = (proc.InstructionRegister & 0x001C) >> 2;
-
-            proc.Registers[destReg] = proc.Registers[sourceReg1] & proc.Registers[sourceReg2];
-
-            proc.Zero = (proc.Registers[destReg] == 0) ? 1 : 0;
-            proc.Sign = (proc.Registers[destReg] & 0x8000) ? 1 : 0;
-            break;
-        }
-        case 0x8: {
-            uint16_t destReg = (proc.InstructionRegister & 0x0700) >> 8;
-            uint16_t sourceReg1 = (proc.InstructionRegister & 0x00E0) >> 5;
-            uint16_t sourceReg2 = (proc.InstructionRegister & 0x001C) >> 2;
-
-            proc.Registers[destReg] = proc.Registers[sourceReg1] | proc.Registers[sourceReg2];
-
-            proc.Zero = (proc.Registers[destReg] == 0) ? 1 : 0;
-            proc.Sign = (proc.Registers[destReg] & 0x8000) ? 1 : 0;
-            break;
-        }
-        case 0x9: {
-            uint16_t destReg = (proc.InstructionRegister & 0x0700) >> 8;
-            uint16_t sourceReg = (proc.InstructionRegister & 0x00E0) >> 5;
-
-            proc.Registers[destReg] = ~proc.Registers[sourceReg];
-
-            proc.Zero = (proc.Registers[destReg] == 0) ? 1 : 0;
-            proc.Sign = (proc.Registers[destReg] & 0x8000) ? 1 : 0;
-            break;
-        }
-        case 0xA: {
-            uint16_t destReg = (proc.InstructionRegister & 0x0700) >> 8;
-            uint16_t sourceReg1 = (proc.InstructionRegister & 0x00E0) >> 5;
-            uint16_t sourceReg2 = (proc.InstructionRegister & 0x001C) >> 2;
-
-            proc.Registers[destReg] = proc.Registers[sourceReg1] ^ proc.Registers[sourceReg2];
-
-            proc.Zero = (proc.Registers[destReg] == 0) ? 1 : 0;
-            proc.Sign = (proc.Registers[destReg] & 0x8000) ? 1 : 0;
-            break;
-        }
-        case 0xB: {
-            uint16_t destReg = (proc.InstructionRegister & 0x0700) >> 8;
-            uint16_t sourceReg = (proc.InstructionRegister & 0x00E0) >> 5;
-            uint16_t immediate = proc.InstructionRegister & 0x001F;
-
-            proc.Registers[destReg] = proc.Registers[sourceReg] >> immediate;
-            break;
-        }
-        case 0xC: {
-            uint16_t destReg = (proc.InstructionRegister & 0x0700) >> 8;
-            uint16_t sourceReg = (proc.InstructionRegister & 0x00E0) >> 5;
-            uint16_t immediate = proc.InstructionRegister & 0x001F;
-
-            proc.Registers[destReg] = proc.Registers[sourceReg] << immediate;
-            break;
-        }
-        case 0xD: {
-            uint16_t destReg = (proc.InstructionRegister & 0x0700) >> 8;
-            uint16_t sourceReg = (proc.InstructionRegister & 0x00E0) >> 5;
-            uint16_t leastSignificantBit = proc.Registers[sourceReg] & 0x0001;
-
-            proc.Registers[destReg] = (proc.Registers[sourceReg] >> 1) | (leastSignificantBit << 15);
-            break;
-        }
-        case 0xE: {
-            uint16_t destReg = (proc.InstructionRegister & 0x0700) >> 8;
-            uint16_t sourceReg = (proc.InstructionRegister & 0x00E0) >> 5;
-            uint16_t mostSignificantBit = (proc.Registers[sourceReg] & 0x8000) >> 15;
-
-            proc.Registers[destReg] = (proc.Registers[sourceReg] << 1) | mostSignificantBit;
-            break;
-        }
-        default: break;
+            default:
+                break;
         }
 
         if ((proc.InstructionRegister & 0xF800) == 0x0000 && (proc.InstructionRegister & 0x0003) == 0x0003) {
@@ -259,6 +283,7 @@ void ExecuteInstructions() {
 
             stack[STACK_END] = proc.Registers[sourceReg] & 0x00FF;
             stack[STACK_END + 1] = (proc.Registers[sourceReg] & 0xFF00) >> 8;
+            stackAccessed[STACK_END] = true;
         }
 
         if ((proc.InstructionRegister & 0xF800) == 0x0000 && (proc.InstructionRegister & 0x0003) == 0x0002) {
@@ -283,24 +308,21 @@ void ExecuteInstructions() {
                 if (proc.ProgramCounter == highestAddress) {
                     break;
                 }
-            }
-            else if (branchType == 0x1) {
+            } else if (branchType == 0x1) {
                 if (proc.Zero == 1 && proc.Sign == 0) {
                     proc.ProgramCounter += immediate;
                     if (proc.ProgramCounter == highestAddress) {
                         break;
                     }
                 }
-            }
-            else if (branchType == 0x2) {
+            } else if (branchType == 0x2) {
                 if (proc.Zero == 0 && proc.Sign == 1) {
                     proc.ProgramCounter += immediate;
                     if (proc.ProgramCounter == highestAddress) {
                         break;
                     }
                 }
-            }
-            else if (branchType == 0x3) {
+            } else if (branchType == 0x3) {
                 if (proc.Zero == 0 && proc.Sign == 0) {
                     proc.ProgramCounter += immediate;
                     if (proc.ProgramCounter == highestAddress) {
@@ -324,3 +346,5 @@ int main() {
 
     return 0;
 }
+
+// TODO: manage utf8 encoding error
