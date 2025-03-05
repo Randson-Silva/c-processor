@@ -71,7 +71,7 @@ void DisplayState() {
     printf("PC: 0x%04X SP: 0x%04X\n", proc.ProgramCounter, proc.StackPointer);
     printf("FLAGS:\n");
     printf("Carry: %d\nOverflow: %d\nZero: %d\nSign: %d\n", proc.Carry, proc.Overflow, proc.Zero, proc.Sign);
-    printf("MEMÓRIA DE DADOS:\n");
+    printf("MEMORIA:\n");
     for (int i = 0; i < MEMORY_SIZE; i += 1) {
         if (accessedMemory[i]) {
             uint16_t value = dataMemory[i] | (dataMemory[i + 1] << 8);
